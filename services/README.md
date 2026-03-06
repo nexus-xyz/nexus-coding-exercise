@@ -23,6 +23,12 @@ Run the blockchain in the background or in its own terminal.
 cargo run -- --start-chain --num-accounts 20
 ```
 
+Learn more about available commands.
+
+```bash
+cargo run -- --help
+```
+
 ## CLI Reference
 
 ### Starting the Chain
