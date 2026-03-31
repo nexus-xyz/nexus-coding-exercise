@@ -1,7 +1,7 @@
 use axum::{
+    Json, Router,
     extract::{Query, State},
     routing::{get, post},
-    Json, Router,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -10,8 +10,10 @@ use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::time::sleep;
-use tracing::{info, Level};
+use tracing::{Level, info};
 use tracing_subscriber::FmtSubscriber;
+
+const TOTAL_SUPPLY: f64 = 1_000_000.0;
 
 /// Initializes and starts the blockchain simulation.
 /// This function sets up the logger, creates the initial chain state,
@@ -21,8 +23,7 @@ pub async fn start_chain(num_accounts: u32) {
     let subscriber = FmtSubscriber::builder()
         .with_max_level(Level::INFO)
         .finish();
-    tracing::subscriber::set_global_default(subscriber)
-        .expect("setting default subscriber failed");
+    tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
 
     // The chain state is created and wrapped in a thread-safe smart pointer.
     let chain = Chain::new(num_accounts);
@@ -49,6 +50,16 @@ pub enum Token {
     DOGE,
     HYPE,
 }
+
+const TOKENS: [Token; 7] = [
+    Token::USDC,
+    Token::USDT,
+    Token::ETH,
+    Token::BTC,
+    Token::NEX,
+    Token::DOGE,
+    Token::HYPE,
+];
 
 /// This implementation allows parsing a string into a Token.
 /// It is case-insensitive and supports alternative names.
@@ -152,36 +163,22 @@ impl Chain {
     pub fn new(num_accounts: u32) -> Self {
         // Initialize the accounts and distribute the initial token supply.
         let mut accounts = HashMap::new();
-        let tokens = [
-            Token::USDC,
-            Token::USDT,
-            Token::ETH,
-            Token::BTC,
-            Token::NEX,
-            Token::DOGE,
-            Token::HYPE,
-        ];
-        let total_supply: f64 = 1_000_000.0;
-        let amount_per_account = if num_accounts > 0 {
-            total_supply / num_accounts as f64
-        } else {
-            0.0
-        };
 
-        for i in 0..num_accounts {
+        for account in 0..num_accounts {
             let mut balances = HashMap::new();
-            for &token in &tokens {
-                balances.insert(token, amount_per_account);
+            let amount = if account == 0 { TOTAL_SUPPLY } else { 0.0 };
+            for &token in &TOKENS {
+                balances.insert(token, amount);
             }
-            accounts.insert(i, balances);
+            accounts.insert(account, balances);
         }
 
         // Initialize the AMM liquidity pools with starting reserves for all token pairs.
         let mut pools = HashMap::new();
-        for i in 0..tokens.len() {
-            for j in (i + 1)..tokens.len() {
-                let t_a = tokens[i];
-                let t_b = tokens[j];
+        for i in 0..TOKENS.len() {
+            for j in (i + 1)..TOKENS.len() {
+                let t_a = TOKENS[i];
+                let t_b = TOKENS[j];
                 pools.insert(
                     get_pool_key(t_a, t_b),
                     AmmPool::new(t_a, 1000.0, t_b, 1000.0),
@@ -248,16 +245,20 @@ async fn handle_transaction(
 }
 
 /// Computes a quoted output amount for a given input based on current pool reserves.
-fn quote_amount_out(state: &ChainState, in_token: Token, out_token: Token, amount_in: f64) -> Option<f64> {
+fn quote_amount_out(
+    state: &ChainState,
+    in_token: Token,
+    out_token: Token,
+    amount_in: f64,
+) -> Option<f64> {
     if amount_in <= 0.0 {
         return None;
     }
     let pool_key = get_pool_key(in_token, out_token);
     if let Some(pool) = state.pools.get(&pool_key) {
-        if let (Some(&in_reserve_val), Some(&out_reserve_val)) = (
-            pool.reserves.get(&in_token),
-            pool.reserves.get(&out_token),
-        ) {
+        if let (Some(&in_reserve_val), Some(&out_reserve_val)) =
+            (pool.reserves.get(&in_token), pool.reserves.get(&out_token))
+        {
             if in_reserve_val > 0.0 && out_reserve_val > 0.0 {
                 let amount_out = (out_reserve_val * amount_in) / (in_reserve_val + amount_in);
                 if amount_out > 0.0 {
@@ -271,9 +272,9 @@ fn quote_amount_out(state: &ChainState, in_token: Token, out_token: Token, amoun
 
 #[derive(Deserialize)]
 struct GetRateQuery {
-    #[serde(rename = "in")] 
+    #[serde(rename = "in")]
     in_token: String,
-    #[serde(rename = "out")] 
+    #[serde(rename = "out")]
     out_token: String,
     amount: Option<f64>,
 }
@@ -293,8 +294,7 @@ async fn get_rate(
     let out_tok = Token::from_str(&params.out_token).expect("Invalid output token specified.");
 
     let state = state.lock().unwrap();
-    let quoted = quote_amount_out(&state, in_tok, out_tok, amount_in)
-        .unwrap_or(0.0);
+    let quoted = quote_amount_out(&state, in_tok, out_tok, amount_in).unwrap_or(0.0);
     Json(GetRateResponse { amount_out: quoted })
 }
 
@@ -304,6 +304,27 @@ async fn produce_blocks(state: Arc<Mutex<ChainState>>) {
     loop {
         sleep(Duration::from_secs(1)).await;
         let mut state = state.lock().unwrap();
+
+        // Create transactions to create initial balances
+        if state.next_block_id == 0 {
+            let num_accounts = state.accounts.len();
+            let amount_per_account = if num_accounts > 0 {
+                TOTAL_SUPPLY / num_accounts as f64
+            } else {
+                0.0
+            };
+            for i in 1..num_accounts {
+                for &token in &TOKENS {
+                    let txn = Transaction::Send {
+                        from: 0,
+                        to: i as u32,
+                        token: token,
+                        amount: amount_per_account,
+                    };
+                    state.pending_transactions.push(txn);
+                }
+            }
+        }
 
         // Take all pending transactions to be processed in the current block.
         let transactions_to_process = std::mem::take(&mut state.pending_transactions);
@@ -364,14 +385,13 @@ fn handle_swap(
                 let pool_key = get_pool_key(in_token, out_token);
                 // Check if the liquidity pool exists.
                 if let Some(pool) = state.pools.get_mut(&pool_key) {
-                    if let (Some(&in_reserve_val), Some(&out_reserve_val)) = (
-                        pool.reserves.get(&in_token),
-                        pool.reserves.get(&out_token),
-                    ) {
+                    if let (Some(&in_reserve_val), Some(&out_reserve_val)) =
+                        (pool.reserves.get(&in_token), pool.reserves.get(&out_token))
+                    {
                         if in_reserve_val > 0.0 && out_reserve_val > 0.0 {
                             // This calculation uses the constant product formula (x * y = k).
-                            let amount_out = (out_reserve_val * amount_in)
-                                / (in_reserve_val + amount_in);
+                            let amount_out =
+                                (out_reserve_val * amount_in) / (in_reserve_val + amount_in);
 
                             // The swap is only valid if it results in a non-zero output.
                             if amount_out > 0.0 && out_reserve_val >= amount_out {
@@ -391,9 +411,15 @@ fn handle_swap(
                         }
                     }
                 }
-            }
-            else {
-                tracing::error!("Transaction Failed: Account {:?} unable to swap {:?} {:?} for {:?}. Current balance: {:?}", account_id, amount_in, in_token, out_token, in_token_balance);
+            } else {
+                tracing::error!(
+                    "Transaction Failed: Account {:?} unable to swap {:?} {:?} for {:?}. Current balance: {:?}",
+                    account_id,
+                    amount_in,
+                    in_token,
+                    out_token,
+                    in_token_balance
+                );
             }
         }
     }
@@ -424,7 +450,13 @@ fn handle_send(
     if let Some(from_account) = state.accounts.get(&from) {
         if let Some(balance) = from_account.get(&token) {
             if *balance < amount {
-                tracing::error!("Transaction Failed: Account {:?} unable to send {:?} {:?}. Current balance: {:?}", from, amount, token, balance);
+                tracing::error!(
+                    "Transaction Failed: Account {:?} unable to send {:?} {:?}. Current balance: {:?}",
+                    from,
+                    amount,
+                    token,
+                    balance
+                );
                 return false;
             }
         } else {
