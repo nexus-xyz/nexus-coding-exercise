@@ -1,4 +1,4 @@
-use clap::{Parser};
+use clap::Parser;
 use services::chain;
 use std::str::FromStr;
 
@@ -65,7 +65,8 @@ async fn main() -> std::io::Result<()> {
             account,
             in_token,
             out_token,
-            amount,
+            amount_in: amount,
+            amount_out: 0.0,
         };
 
         let client = reqwest::Client::new();
@@ -79,10 +80,7 @@ async fn main() -> std::io::Result<()> {
         if res.status().is_success() {
             println!("Swap transaction sent to chain successfully.");
         } else {
-            println!(
-                "Failed to send swap transaction. Status: {}",
-                res.status()
-            );
+            println!("Failed to send swap transaction. Status: {}", res.status());
         }
     } else if let Some(send_args) = args.send {
         // This block handles the --send command.
@@ -116,10 +114,7 @@ async fn main() -> std::io::Result<()> {
         if res.status().is_success() {
             println!("Send transaction sent to chain successfully.");
         } else {
-            println!(
-                "Failed to send send transaction. Status: {}",
-                res.status()
-            );
+            println!("Failed to send send transaction. Status: {}", res.status());
         }
     } else if let Some(n_str) = args.block {
         // This block handles the --block command.

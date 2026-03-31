@@ -98,7 +98,9 @@ pub enum Transaction {
         account: AccountId,
         in_token: Token,
         out_token: Token,
-        amount: f64,
+        amount_in: f64,
+        #[serde(default)]
+        amount_out: f64,
     },
 }
 
@@ -332,13 +334,14 @@ async fn produce_blocks(state: Arc<Mutex<ChainState>>) {
 
         // Each transaction is processed, and only successful ones are kept.
         for tx in transactions_to_process {
-            let success = match tx.clone() {
+            let successful_tx = match tx.clone() {
                 Transaction::Swap {
                     account,
                     in_token,
                     out_token,
-                    amount,
-                } => handle_swap(&mut state, account, in_token, out_token, amount),
+                    amount_in,
+                    amount_out: _,
+                } => handle_swap(&mut state, account, in_token, out_token, amount_in),
                 Transaction::Send {
                     from,
                     to,
@@ -346,8 +349,9 @@ async fn produce_blocks(state: Arc<Mutex<ChainState>>) {
                     amount,
                 } => handle_send(&mut state, from, to, token, amount),
             };
-            if success {
-                successfully_processed_txs.push(tx);
+            match successful_tx {
+                Some(successful_tx) => successfully_processed_txs.push(successful_tx),
+                None => (),
             }
         }
 
@@ -377,7 +381,7 @@ fn handle_swap(
     in_token: Token,
     out_token: Token,
     amount_in: f64,
-) -> bool {
+) -> Option<Transaction> {
     // Check if the account exists and has sufficient balance.
     if let Some(account_balances) = state.accounts.get_mut(&account_id) {
         if let Some(in_token_balance) = account_balances.get_mut(&in_token) {
@@ -406,7 +410,13 @@ fn handle_swap(
                                 *in_reserve += amount_in;
                                 let out_reserve = pool.reserves.get_mut(&out_token).unwrap();
                                 *out_reserve -= amount_out;
-                                return true;
+                                return Some(Transaction::Swap {
+                                    account: account_id,
+                                    in_token,
+                                    out_token,
+                                    amount_in,
+                                    amount_out,
+                                });
                             }
                         }
                     }
@@ -424,7 +434,7 @@ fn handle_swap(
         }
     }
     // Return false if any check fails.
-    false
+    None
 }
 
 /// Handles the logic for a send transaction.
@@ -435,15 +445,15 @@ fn handle_send(
     to: AccountId,
     token: Token,
     amount: f64,
-) -> bool {
+) -> Option<Transaction> {
     // Sending to oneself is not allowed.
     if from == to {
-        return false;
+        return None;
     }
 
     // Both the sender and receiver must be existing accounts.
     if !state.accounts.contains_key(&from) || !state.accounts.contains_key(&to) {
-        return false;
+        return None;
     }
 
     // The sender must have a sufficient balance of the specified token.
@@ -457,11 +467,11 @@ fn handle_send(
                     token,
                     balance
                 );
-                return false;
+                return None;
             }
         } else {
             // This case handles if the sender has no balance of the token at all.
-            return false;
+            return None;
         }
     }
 
@@ -478,5 +488,10 @@ fn handle_send(
         *balance += amount;
     }
 
-    true
+    Some(Transaction::Send {
+        from,
+        to,
+        token,
+        amount,
+    })
 }
