@@ -112,7 +112,7 @@ Submit a transaction to the blockchain. The transaction will be added to the pen
     "account": 2,
     "in_token": "USDC",
     "out_token": "USDT",
-    "amount": 10.0
+    "amount_in": 10.0
   }
 }
 ```
@@ -142,7 +142,7 @@ curl -X POST http://127.0.0.1:3000/transaction \
       "account": 2,
       "in_token": "USDC",
       "out_token": "USDT",
-      "amount": 10.0
+      "amount_in": 10.0
     }
   }'
 ```

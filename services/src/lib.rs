@@ -1,6 +1,5 @@
 pub mod chain;
 
-
 #[cfg(test)]
 mod tests {
     use super::chain;
@@ -41,7 +40,8 @@ mod tests {
             account: 0,
             in_token: chain::Token::NEX,
             out_token: chain::Token::ETH,
-            amount: 100.0,
+            amount_in: 100.0,
+            amount_out: 0.0,
         };
 
         let _ = client
@@ -65,6 +65,11 @@ mod tests {
             .expect("invalid rate response");
 
         // After consuming ETH liquidity with a NEX->ETH swap, the quoted output should decrease
-        assert!(after.amount_out < before.amount_out, "expected quote to decrease after swap: before={} after={}", before.amount_out, after.amount_out);
+        assert!(
+            after.amount_out < before.amount_out,
+            "expected quote to decrease after swap: before={} after={}",
+            before.amount_out,
+            after.amount_out
+        );
     }
 }
