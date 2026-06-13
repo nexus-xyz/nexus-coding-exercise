@@ -182,10 +182,8 @@ impl Chain {
 
         // Initialize the AMM liquidity pools with starting reserves for all token pairs.
         let mut pools = HashMap::new();
-        for i in 0..TOKENS.len() {
-            for j in (i + 1)..TOKENS.len() {
-                let t_a = TOKENS[i];
-                let t_b = TOKENS[j];
+        for (i, &t_a) in TOKENS.iter().enumerate() {
+            for &t_b in TOKENS.iter().skip(i + 1) {
                 pools.insert(
                     get_pool_key(t_a, t_b),
                     AmmPool::new(t_a, 1000.0, t_b, 1000.0),
@@ -262,16 +260,15 @@ fn quote_amount_out(
         return None;
     }
     let pool_key = get_pool_key(in_token, out_token);
-    if let Some(pool) = state.pools.get(&pool_key) {
-        if let (Some(&in_reserve_val), Some(&out_reserve_val)) =
+    if let Some(pool) = state.pools.get(&pool_key)
+        && let (Some(&in_reserve_val), Some(&out_reserve_val)) =
             (pool.reserves.get(&in_token), pool.reserves.get(&out_token))
-        {
-            if in_reserve_val > 0.0 && out_reserve_val > 0.0 {
-                let amount_out = (out_reserve_val * amount_in) / (in_reserve_val + amount_in);
-                if amount_out > 0.0 {
-                    return Some(amount_out);
-                }
-            }
+        && in_reserve_val > 0.0
+        && out_reserve_val > 0.0
+    {
+        let amount_out = (out_reserve_val * amount_in) / (in_reserve_val + amount_in);
+        if amount_out > 0.0 {
+            return Some(amount_out);
         }
     }
     None
@@ -325,7 +322,7 @@ async fn produce_blocks(state: Arc<Mutex<ChainState>>) {
                     let txn = Transaction::Send {
                         from: 0,
                         to: i as u32,
-                        token: token,
+                        token,
                         amount: amount_per_account,
                     };
                     state.pending_transactions.push(txn);
@@ -354,9 +351,8 @@ async fn produce_blocks(state: Arc<Mutex<ChainState>>) {
                     amount,
                 } => handle_send(&mut state, from, to, token, amount),
             };
-            match successful_tx {
-                Some(successful_tx) => successfully_processed_txs.push(successful_tx),
-                None => (),
+            if let Some(successful_tx) = successful_tx {
+                successfully_processed_txs.push(successful_tx)
             }
         }
 
@@ -388,54 +384,51 @@ fn handle_swap(
     amount_in: f64,
 ) -> Option<Transaction> {
     // Check if the account exists and has sufficient balance.
-    if let Some(account_balances) = state.accounts.get_mut(&account_id) {
-        if let Some(in_token_balance) = account_balances.get_mut(&in_token) {
-            if *in_token_balance >= amount_in {
-                let pool_key = get_pool_key(in_token, out_token);
-                // Check if the liquidity pool exists.
-                if let Some(pool) = state.pools.get_mut(&pool_key) {
-                    if let (Some(&in_reserve_val), Some(&out_reserve_val)) =
-                        (pool.reserves.get(&in_token), pool.reserves.get(&out_token))
-                    {
-                        if in_reserve_val > 0.0 && out_reserve_val > 0.0 {
-                            // This calculation uses the constant product formula (x * y = k).
-                            let amount_out =
-                                (out_reserve_val * amount_in) / (in_reserve_val + amount_in);
+    if let Some(account_balances) = state.accounts.get_mut(&account_id)
+        && let Some(in_token_balance) = account_balances.get_mut(&in_token)
+    {
+        if *in_token_balance >= amount_in {
+            let pool_key = get_pool_key(in_token, out_token);
+            // Check if the liquidity pool exists.
+            if let Some(pool) = state.pools.get_mut(&pool_key)
+                && let (Some(&in_reserve_val), Some(&out_reserve_val)) =
+                    (pool.reserves.get(&in_token), pool.reserves.get(&out_token))
+                && in_reserve_val > 0.0
+                && out_reserve_val > 0.0
+            {
+                // This calculation uses the constant product formula (x * y = k).
+                let amount_out = (out_reserve_val * amount_in) / (in_reserve_val + amount_in);
 
-                            // The swap is only valid if it results in a non-zero output.
-                            if amount_out > 0.0 && out_reserve_val >= amount_out {
-                                // Update the account's balances.
-                                *in_token_balance -= amount_in;
-                                let out_token_balance =
-                                    account_balances.entry(out_token).or_insert(0.0);
-                                *out_token_balance += amount_out;
+                // The swap is only valid if it results in a non-zero output.
+                if amount_out > 0.0 && out_reserve_val >= amount_out {
+                    // Update the account's balances.
+                    *in_token_balance -= amount_in;
+                    let out_token_balance = account_balances.entry(out_token).or_insert(0.0);
+                    *out_token_balance += amount_out;
 
-                                // Update the pool's reserves.
-                                let in_reserve = pool.reserves.get_mut(&in_token).unwrap();
-                                *in_reserve += amount_in;
-                                let out_reserve = pool.reserves.get_mut(&out_token).unwrap();
-                                *out_reserve -= amount_out;
-                                return Some(Transaction::Swap {
-                                    account: account_id,
-                                    in_token,
-                                    out_token,
-                                    amount_in,
-                                    amount_out,
-                                });
-                            }
-                        }
-                    }
+                    // Update the pool's reserves.
+                    let in_reserve = pool.reserves.get_mut(&in_token).unwrap();
+                    *in_reserve += amount_in;
+                    let out_reserve = pool.reserves.get_mut(&out_token).unwrap();
+                    *out_reserve -= amount_out;
+                    return Some(Transaction::Swap {
+                        account: account_id,
+                        in_token,
+                        out_token,
+                        amount_in,
+                        amount_out,
+                    });
                 }
-            } else {
-                tracing::error!(
-                    "Transaction Failed: Account {:?} unable to swap {:?} {:?} for {:?}. Current balance: {:?}",
-                    account_id,
-                    amount_in,
-                    in_token,
-                    out_token,
-                    in_token_balance
-                );
             }
+        } else {
+            tracing::error!(
+                "Transaction Failed: Account {:?} unable to swap {:?} {:?} for {:?}. Current balance: {:?}",
+                account_id,
+                amount_in,
+                in_token,
+                out_token,
+                in_token_balance
+            );
         }
     }
     // Return false if any check fails.
@@ -481,10 +474,10 @@ fn handle_send(
     }
 
     // Debit the amount from the sender's account.
-    if let Some(from_account) = state.accounts.get_mut(&from) {
-        if let Some(balance) = from_account.get_mut(&token) {
-            *balance -= amount;
-        }
+    if let Some(from_account) = state.accounts.get_mut(&from)
+        && let Some(balance) = from_account.get_mut(&token)
+    {
+        *balance -= amount;
     }
 
     // Credit the amount to the receiver's account.
