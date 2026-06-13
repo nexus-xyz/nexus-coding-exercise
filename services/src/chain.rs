@@ -161,9 +161,14 @@ pub struct Chain {
 
 impl Chain {
     /// Creates a new chain with an initial state.
-    /// It initializes accounts with an equal distribution of tokens and sets up the AMM pools.
+    /// At genesis, account 0 holds the entire supply of every token; all other
+    /// accounts start empty. The supply is later distributed equally across all
+    /// accounts via `Send` transactions when block 0 is produced (see
+    /// `produce_blocks`), so the even distribution only exists once the chain
+    /// starts running. AMM pools are set up here with their initial reserves.
     pub fn new(num_accounts: u32) -> Self {
-        // Initialize the accounts and distribute the initial token supply.
+        // Give account 0 the entire initial supply of each token; it acts as the
+        // genesis account that funds everyone else in block 0.
         let mut accounts = HashMap::new();
 
         for account in 0..num_accounts {

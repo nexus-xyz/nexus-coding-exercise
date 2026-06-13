@@ -41,7 +41,8 @@ mod tests {
             account: 0,
             in_token: chain::Token::NEX,
             out_token: chain::Token::ETH,
-            amount: 100.0,
+            amount_in: 100.0,
+            amount_out: 0.0,
         };
 
         let _ = client
